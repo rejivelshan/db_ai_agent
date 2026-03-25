@@ -1,0 +1,9 @@
+pandas
+pymongo
+psycopg2-binary
+ibm_db
+ibm_db
+python-dotenv
+langchain
+openai
+chromadb
