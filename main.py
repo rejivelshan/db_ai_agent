@@ -3,6 +3,8 @@ from connectors.mongo_connector import MongoConnector
 from core.normalizer import normalize_sql_data
 from core.comparator import compare_data
 from core.reporter import export_to_csv
+from core.ai_agent import explain_mismatch
+from core.chatbot import ask_agent
 
 # PostgreSQL
 pg = PostgresConnector()
@@ -29,7 +31,7 @@ normalized_sql = normalize_sql_data(sql_data)
 
 print("\n✅ Normalized SQL:")
 print(normalized_sql)
-
+print("\n")
 # Mongo
 mongo = MongoConnector()
 mongo.connect()
@@ -65,3 +67,27 @@ if total > 0:
     print(f"Affected users: {list(affected_users)}")
 
 export_to_csv(mismatches, "reports/report.csv")
+
+print("\n"*2)
+
+print("\n🤖 AI Explanations:\n")
+
+if mismatches:
+    for m in mismatches[:10]:
+        print(explain_mismatch(m))
+        print("-" * 50)
+else:
+    print("No mismatches to explain")
+
+print("\n💬 Chat with your data (type 'exit' to quit)\n")
+
+while True:
+    question = input("You: ")
+
+    if question.lower() == "exit":
+        break
+
+    answer = ask_agent(question, mismatches)
+
+    print("\n🤖:", answer)
+    print("-" * 60)

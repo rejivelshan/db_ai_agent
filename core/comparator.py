@@ -1,4 +1,9 @@
 from collections import defaultdict
+from rapidfuzz import fuzz
+
+def is_similar(a, b):
+    return fuzz.ratio(str(a), str(b)) > 80
+
 def classify_mismatch(status):
     if status == "DUPLICATE_IN_MONGO":
         return {
@@ -204,26 +209,33 @@ def compare_list(l1, l2, mismatches, path):
         dict1 = {item[key]: item for item in l1 if key in item}
         dict2 = {item[key]: item for item in l2 if key in item}
 
-        matched = set()
+        used_sql = set()
+        used_mongo = set()
 
         for k1 in dict1:
             found_match = False
 
             for k2 in dict2:
-                # exact match
+                if k2 in used_mongo:
+                    continue
+
+                # ✅ exact match
                 if k1 == k2:
                     compare_dict(dict1[k1], dict2[k2], mismatches, f"{path}[{key}={k1}]")
-                    matched.add(k2)
+                    used_sql.add(k1)
+                    used_mongo.add(k2)
                     found_match = True
                     break
 
-                # 🔥 fuzzy match
-                if k1.lower()[:5] == k2.lower()[:5]:
+                # 🔥 fuzzy match (REAL FIX)
+                if is_similar(k1, k2):
                     compare_dict(dict1[k1], dict2[k2], mismatches, f"{path}[{key}≈{k1}]")
-                    matched.add(k2)
+                    used_sql.add(k1)
+                    used_mongo.add(k2)
                     found_match = True
                     break
 
+            # ❌ only if truly not matched
             if not found_match:
                 info = classify_mismatch("MISSING_IN_MONGO")
 
@@ -236,9 +248,9 @@ def compare_list(l1, l2, mismatches, path):
                     **info
                 })
 
-        # remaining mongo items
+        # 🔥 remaining mongo items (FIXED)
         for k2 in dict2:
-            if k2 not in matched:
+            if k2 not in used_mongo:
                 info = classify_mismatch("MISSING_IN_SQL")
 
                 mismatches.append({

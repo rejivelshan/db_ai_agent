@@ -25,8 +25,10 @@ def export_to_csv(mismatches, filename="report.csv"):
     keys = list(keys)
 
     with open(filename, "w", newline="", encoding="utf-8") as f:
+
         writer = csv.DictWriter(f, fieldnames=keys)
         writer.writeheader()
         writer.writerows(mismatches)
+
 
     print(f"📁 Report exported to {filename}")

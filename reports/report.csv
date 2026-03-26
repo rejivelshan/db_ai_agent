@@ -1,2 +1,2 @@
-sql_value,severity,error,status,path,mongo_value,category
-,MEDIUM,Duplicate records in Mongo,DUPLICATE_IN_MONGO,user_id=3,"[{'user_id': 3, 'name': 'David', 'email': 'david@example.com', 'orders': [{'order_id': 103, 'total_amount': 1200, 'items': [{'product_name': 'Monitor', 'quantity': 1}, {'product_name': 'HDMI Cable', 'quantity': 2}]}]}, {'user_id': 3, 'name': 'David', 'email': 'david@example.com', 'orders': [{'order_id': 103, 'total_amount': 1200, 'items': [{'product_name': 'Monitor', 'quantity': 1}, {'product_name': 'HDMI Cable', 'quantity': 2}]}]}]",DATA
+error,category,mongo_value,path,sql_value,status,severity
+,DATA,davgsid@example.com,user_id=3.email,david@example.com,VALUE_MISMATCH,MEDIUM
