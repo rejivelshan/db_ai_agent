@@ -5,29 +5,45 @@ from core.comparator import compare_data
 from core.reporter import export_to_csv
 from core.ai_agent import explain_mismatch
 from core.chatbot import ask_agent
-
+from core.schema_extractor import extract_postgres_schema
+import json
+from core.mongo_schema_infer import infer_mongo_schema
+from core.schema_mapper import (
+    build_relationship_graph,
+    find_root_table,
+    build_mapping_tree,
+    generate_join_query
+)
 # PostgreSQL
 pg = PostgresConnector()
 pg.connect()
+schema = extract_postgres_schema(pg.conn)
 
-sql_query = """
-SELECT 
-    u.user_id,
-    u.name,
-    u.email,
-    o.order_id,
-    o.total_amount,
-    oi.product_name,
-    oi.quantity
-FROM users u
-JOIN orders o ON u.user_id = o.user_id
-JOIN order_items oi ON o.order_id = oi.order_id;
-"""
+print("\n📊 Extracted Schema:\n")
+for table, details in schema.items():
+    print(f"\n🔹 Table: {table}")
+    print("Columns:", details["columns"])
+    print("PK:", details["primary_key"])
+    print("FK:", details["foreign_keys"])
+print("\n")
 
-sql_data = pg.fetch_data(sql_query)
+
+
+graph = build_relationship_graph(schema)
+root = find_root_table(graph)
+mapping_tree = build_mapping_tree(graph, root)
+
+print("\n🧠 Mapping Tree:")
+print(mapping_tree)
+
+auto_query = generate_join_query(mapping_tree, schema)
+
+print("\n⚡ Auto Generated SQL:\n", auto_query)
+
+sql_data = pg.fetch_data(auto_query)
 
 # Normalize SQL
-normalized_sql = normalize_sql_data(sql_data)
+normalized_sql = normalize_sql_data(sql_data, mapping_tree)
 
 print("\n✅ Normalized SQL:")
 print(normalized_sql)
@@ -36,6 +52,15 @@ print("\n")
 mongo = MongoConnector()
 mongo.connect()
 
+collection_name = "orders_embedded"
+
+mongo_collection = mongo.db[collection_name]
+
+mongo_schema = infer_mongo_schema(mongo_collection)
+
+print("\n📦 Mongo Schema (Advanced):\n")
+print(json.dumps(mongo_schema, indent=4))
+print("\n")
 mongo_data = mongo.fetch_data("orders_embedded")
 
 print("\n✅ Mongo Data:")

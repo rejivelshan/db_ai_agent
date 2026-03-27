@@ -1,34 +1,62 @@
-def normalize_sql_data(rows):
-    users = {}
+def normalize_sql_data(rows, mapping_tree):
+    """
+    Convert flat SQL rows into nested JSON using mapping tree
+    """
+
+    root_table = mapping_tree["table"]
+    root_key = f"{root_table}_user_id" if root_table == "users" else None
+
+    result = {}
+
+    def get_value(row, table, column):
+        return row.get(f"{table}_{column}")
 
     for row in rows:
-        user_id = row["user_id"]
+        # 🔥 ROOT LEVEL (users)
+        root_id = get_value(row, root_table, "user_id")
 
-        if user_id not in users:
-            users[user_id] = {
-                "user_id": user_id,
-                "name": row["name"],
-                "email": row["email"],
+        if root_id is None:
+            continue
+
+        if root_id not in result:
+            result[root_id] = {
+                "user_id": root_id,
+                "name": get_value(row, root_table, "name"),
+                "email": get_value(row, root_table, "email"),
                 "orders": {}
             }
 
-        order_id = row["order_id"]
+        user = result[root_id]
 
-        if order_id not in users[user_id]["orders"]:
-            users[user_id]["orders"][order_id] = {
+        # 🔥 ORDERS LEVEL
+        order_id = get_value(row, "orders", "order_id")
+
+        if order_id is None:
+            continue
+
+        if order_id not in user["orders"]:
+            user["orders"][order_id] = {
                 "order_id": order_id,
-                "total_amount": row["total_amount"],
+                "total_amount": get_value(row, "orders", "total_amount"),
                 "items": []
             }
 
-        users[user_id]["orders"][order_id]["items"].append({
-            "product_name": row["product_name"],
-            "quantity": row["quantity"]
-        })
+        order = user["orders"][order_id]
 
-    result = []
-    for user in users.values():
+        # 🔥 ITEMS LEVEL
+        product_name = get_value(row, "order_items", "product_name")
+        quantity = get_value(row, "order_items", "quantity")
+
+        if product_name is not None:
+            order["items"].append({
+                "product_name": product_name,
+                "quantity": quantity
+            })
+
+    # 🔥 FINAL FORMAT CLEANUP
+    final_result = []
+    for user in result.values():
         user["orders"] = list(user["orders"].values())
-        result.append(user)
+        final_result.append(user)
 
-    return result
+    return final_result

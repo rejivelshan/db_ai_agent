@@ -1,2 +1,2 @@
-error,category,mongo_value,path,sql_value,status,severity
-,DATA,davgsid@example.com,user_id=3.email,david@example.com,VALUE_MISMATCH,MEDIUM
+mongo_value,severity,status,sql_value,error,category,path
+"{'product_name': 'Keyboard', 'quantity': 1}",HIGH,MISSING_IN_SQL,,Missing in SQL,DATA,user_id=2.orders[order_id=102].items[product_name=Keyboard]
