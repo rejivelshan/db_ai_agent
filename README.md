@@ -82,7 +82,18 @@ DB AI Agent is an intelligent system that compares PostgreSQL and MongoDB data, 
 * How to fix mismatches?
 
 ---
+# Phase 4 — Automated Schema & Data Comparison Engine
 
+## 📌 Overview
+
+Phase 4 introduces a fully automated system to:
+- Understand relational and NoSQL database structures
+- Infer relationships without manual input
+- Generate SQL queries dynamically
+- Transform flat relational data into nested JSON
+- Compare SQL and MongoDB data intelligently
+
+---
 ## ⚙️ Tech Stack
 
 * Python
