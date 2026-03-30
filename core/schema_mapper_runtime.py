@@ -8,6 +8,10 @@ def rank_identifier_fields(fields):
     return sorted(fields, key=score)
 
 
+def get_table_key_columns(details):
+    return details.get("primary_key") or details.get("inferred_primary_key") or []
+
+
 def get_primary_keys_for_object(obj):
     global GLOBAL_SCHEMA
 
@@ -18,9 +22,9 @@ def get_primary_keys_for_object(obj):
 
     matches = []
     for details in GLOBAL_SCHEMA.values():
-        primary_keys = details.get("primary_key", [])
-        if primary_keys and set(primary_keys).issubset(object_fields):
-            matches.extend(pk for pk in primary_keys if pk in obj)
+        key_columns = get_table_key_columns(details)
+        if key_columns and set(key_columns).issubset(object_fields):
+            matches.extend(pk for pk in key_columns if pk in obj)
 
     deduped = []
     seen = set()
@@ -75,7 +79,7 @@ def is_primary_key_field(field):
         return False
 
     for table, details in GLOBAL_SCHEMA.items():
-        if field in details.get("primary_key", []):
+        if field in get_table_key_columns(details):
             return True
 
     return False
@@ -113,7 +117,7 @@ def is_primary_key(field):
         return False
 
     for table, details in GLOBAL_SCHEMA.items():
-        if field in details.get("primary_key", []):
+        if field in get_table_key_columns(details):
             return True
 
     return False

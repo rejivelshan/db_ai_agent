@@ -28,7 +28,7 @@ def tokenize(name):
 
 def is_identifier_like(name):
     tokens = name.lower().split("_")
-    return name.lower() == "id" or "id" in tokens
+    return any(token in {"id", "number", "code", "ref", "key"} for token in tokens)
 
 
 def similarity(a, b):

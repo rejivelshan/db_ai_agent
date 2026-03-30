@@ -9,7 +9,10 @@ def is_similar(a, b):
 
 
 def is_identifier_like(name):
-    return "id" in str(name).lower().split("_")
+    return any(
+        token in {"id", "number", "code", "ref", "key"}
+        for token in str(name).lower().split("_")
+    )
 
 
 def classify_mismatch(status):
@@ -73,8 +76,16 @@ def find_identifier_key(records):
     if not candidate_counts:
         return None
 
-    if "id" in candidate_counts:
+    unique_candidates = [
+        key for key in candidate_counts
+        if len(candidate_distinct_values[key]) == candidate_counts[key]
+    ]
+
+    if "id" in unique_candidates:
         return "id"
+
+    if not unique_candidates:
+        return None
 
     def score(key):
         return (
@@ -84,7 +95,7 @@ def find_identifier_key(records):
             key,
         )
 
-    return min(candidate_counts.keys(), key=score)
+    return min(unique_candidates, key=score)
 
 
 def build_root_path(key_name, key_value):
@@ -274,7 +285,10 @@ def detect_key(l1, l2):
 
     if "id" in common_keys:
         candidate_values = [item.get("id") for item in records]
-        if all(value is not None and not isinstance(value, (dict, list)) for value in candidate_values):
+        if (
+            all(value is not None and not isinstance(value, (dict, list)) for value in candidate_values)
+            and len(set(candidate_values)) == len(candidate_values)
+        ):
             return "id"
 
     ranked = sorted(
@@ -285,8 +299,15 @@ def detect_key(l1, l2):
         ),
     )
     for key in ranked:
-        values = [item.get(key) for item in records]
-        if all(value is not None and not isinstance(value, (dict, list)) for value in values):
+        values1 = [item.get(key) for item in l1 if isinstance(item, dict) and key in item]
+        values2 = [item.get(key) for item in l2 if isinstance(item, dict) and key in item]
+        combined_values = values1 + values2
+        if (
+            combined_values
+            and all(value is not None and not isinstance(value, (dict, list)) for value in combined_values)
+            and len(set(values1)) == len(values1)
+            and len(set(values2)) == len(values2)
+        ):
             return key
 
     return None
@@ -342,6 +363,59 @@ def compare_list(l1, l2, mismatches, path):
                     "status": "MISSING_IN_SQL",
                     **info,
                 })
+        return
+
+    if all(isinstance(item, dict) for item in l1 + l2):
+        used_mongo = set()
+
+        for index, item1 in enumerate(l1):
+            best_match_index = None
+            best_candidate = None
+            best_score = None
+
+            for mongo_index, item2 in enumerate(l2):
+                if mongo_index in used_mongo:
+                    continue
+
+                candidate = []
+                compare_dict(item1, item2, candidate, f"{path}[{index}]")
+                score = len(candidate)
+
+                if best_score is None or score < best_score:
+                    best_score = score
+                    best_match_index = mongo_index
+                    best_candidate = candidate
+
+                if score == 0:
+                    break
+
+            if best_match_index is None:
+                info = classify_mismatch("MISSING_IN_MONGO")
+                mismatches.append({
+                    "path": f"{path}[{index}]",
+                    "sql_value": item1,
+                    "mongo_value": None,
+                    "error": "Missing in Mongo",
+                    "status": "MISSING_IN_MONGO",
+                    **info,
+                })
+                continue
+
+            used_mongo.add(best_match_index)
+            mismatches.extend(best_candidate)
+
+        for mongo_index, item2 in enumerate(l2):
+            if mongo_index in used_mongo:
+                continue
+            info = classify_mismatch("MISSING_IN_SQL")
+            mismatches.append({
+                "path": f"{path}[{mongo_index}]",
+                "sql_value": None,
+                "mongo_value": item2,
+                "error": "Missing in SQL",
+                "status": "MISSING_IN_SQL",
+                **info,
+            })
         return
 
     max_len = max(len(l1), len(l2))

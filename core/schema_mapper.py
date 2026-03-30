@@ -1,4 +1,6 @@
 import difflib
+import itertools
+from collections import Counter
 
 
 def singularize(name):
@@ -24,6 +26,9 @@ DEPRIORITIZED_PREFIXES = {
     "receiver": -3,
 }
 
+IDENTIFIER_TOKENS = {"id", "number", "code", "ref", "key"}
+MEASURE_TOKENS = {"amount", "fare", "price", "balance", "rating", "status", "date", "time"}
+
 
 def tokenize(name):
     return [singularize(token) for token in name.lower().split("_") if token]
@@ -37,7 +42,105 @@ def similarity(left, right):
     return difflib.SequenceMatcher(None, normalize_label(left), normalize_label(right)).ratio()
 
 
-def get_reference_candidates(table_name, parent_table, parent_primary_keys):
+def make_hashable(value):
+    if isinstance(value, dict):
+        return tuple(sorted((key, make_hashable(val)) for key, val in value.items()))
+    if isinstance(value, list):
+        return tuple(make_hashable(item) for item in value)
+    return value
+
+
+def make_key(row, columns):
+    values = []
+    for column in columns:
+        value = row.get(column)
+        if value is None:
+            return None
+        values.append(make_hashable(value))
+    return tuple(values)
+
+
+def count_keys(rows, columns):
+    counts = Counter()
+    for row in rows:
+        key = make_key(row, columns)
+        if key is not None:
+            counts[key] += 1
+    return counts
+
+
+def is_identifier_like(name):
+    return any(token in IDENTIFIER_TOKENS for token in tokenize(name))
+
+
+def is_measure_like(name):
+    return any(token in MEASURE_TOKENS for token in tokenize(name))
+
+
+def unique_key_score(combo):
+    identifier_count = sum(1 for column in combo if is_identifier_like(column))
+    measure_count = sum(1 for column in combo if is_measure_like(column))
+    return (
+        measure_count,
+        -identifier_count,
+        len(combo),
+        combo,
+    )
+
+
+def infer_unique_key_columns(rows, columns, max_size=3):
+    if not rows or not columns:
+        return []
+
+    columns = sorted(columns)
+    limit = min(max_size, len(columns))
+
+    for size in range(1, limit + 1):
+        valid_combos = []
+        for combo in itertools.combinations(columns, size):
+            counts = count_keys(rows, combo)
+            if len(counts) != len(rows):
+                continue
+            if sum(counts.values()) != len(rows):
+                continue
+            valid_combos.append(combo)
+
+        if valid_combos:
+            return list(min(valid_combos, key=unique_key_score))
+
+    return []
+
+
+def profile_schema(schema, table_rows):
+    profiled = {}
+
+    for table, details in schema.items():
+        updated = {
+            **details,
+            "columns": dict(details.get("columns", {})),
+            "primary_key": list(details.get("primary_key", [])),
+            "foreign_keys": list(details.get("foreign_keys", [])),
+        }
+
+        rows = table_rows.get(table, [])
+        updated["row_count"] = len(rows)
+        updated["inferred_primary_key"] = []
+
+        if not updated["primary_key"]:
+            inferred = infer_unique_key_columns(rows, updated["columns"].keys())
+            if inferred:
+                updated["inferred_primary_key"] = inferred
+
+        profiled[table] = updated
+
+    return profiled
+
+
+def get_key_columns(details):
+    return details.get("primary_key") or details.get("inferred_primary_key") or []
+
+
+def get_reference_candidates(table_name, parent_table, parent_key_columns):
     parent_base = singularize(parent_table.lower())
     table_base = singularize(table_name.lower())
 
@@ -47,43 +150,43 @@ def get_reference_candidates(table_name, parent_table, parent_primary_keys):
         f"{table_base}_{parent_base}_id",
     ]
 
-    for primary_key in parent_primary_keys:
-        if primary_key not in candidates:
-            candidates.append(primary_key)
+    for key_column in parent_key_columns:
+        if key_column not in candidates:
+            candidates.append(key_column)
 
     return candidates
 
 
-def score_reference_column(table_name, column, parent_table, parent_primary_key):
+def score_reference_column(table_name, column, parent_table, parent_key_column):
     column_tokens = set(tokenize(column))
     parent_tokens = set(tokenize(parent_table))
-    primary_key_tokens = set(tokenize(parent_primary_key))
+    key_tokens = set(tokenize(parent_key_column))
 
-    legacy_candidates = set(get_reference_candidates(table_name, parent_table, [parent_primary_key]))
+    legacy_candidates = set(get_reference_candidates(table_name, parent_table, [parent_key_column]))
     score = 0
 
-    if column == parent_primary_key:
+    if column == parent_key_column:
         return 100
 
     if column in legacy_candidates:
         score = max(score, 95)
 
-    if primary_key_tokens and column_tokens == primary_key_tokens:
+    if key_tokens and column_tokens == key_tokens:
         score = max(score, 90)
 
-    if primary_key_tokens and primary_key_tokens.issubset(column_tokens):
+    if key_tokens and key_tokens.issubset(column_tokens):
         score = max(score, 82)
 
-    if primary_key_tokens and column_tokens.issubset(primary_key_tokens) and column_tokens:
+    if key_tokens and column_tokens.issubset(key_tokens) and column_tokens:
         score = max(score, 72)
 
-    shared_primary_key_tokens = len(column_tokens & primary_key_tokens)
+    shared_key_tokens = len(column_tokens & key_tokens)
     shared_parent_tokens = len(column_tokens & parent_tokens)
 
-    score += shared_primary_key_tokens * 18
+    score += shared_key_tokens * 18
     score += shared_parent_tokens * 10
 
-    if shared_primary_key_tokens and shared_parent_tokens:
+    if shared_key_tokens and shared_parent_tokens:
         score += 12
 
     tokens = tokenize(column)
@@ -105,8 +208,9 @@ def resolve_join_relationship(table, parent, schema, inferred_only=False):
         if len(explicit_matches) == 1:
             fk = explicit_matches[0]
             return {
-                "child_column": fk["column"],
-                "parent_column": fk["references"]["column"],
+                "parent_columns": [fk["references"]["column"]],
+                "child_columns": [fk["column"]],
+                "mode": "match",
                 "score": 1000,
                 "explicit": True,
             }
@@ -120,30 +224,47 @@ def resolve_join_relationship(table, parent, schema, inferred_only=False):
         )
         best_match = ranked_matches[0]
         return {
-            "child_column": best_match["column"],
-            "parent_column": best_match["references"]["column"],
+            "parent_columns": [best_match["references"]["column"]],
+            "child_columns": [best_match["column"]],
+            "mode": "match",
             "score": 1000,
             "explicit": True,
         }
 
+    parent_key_columns = get_key_columns(schema[parent])
+    if not parent_key_columns:
+        return None
+
+    if len(parent_key_columns) > 1:
+        if all(column in details["columns"] for column in parent_key_columns):
+            return {
+                "parent_columns": list(parent_key_columns),
+                "child_columns": list(parent_key_columns),
+                "mode": "match",
+                "score": 95,
+                "explicit": False,
+            }
+        return None
+
+    parent_key_column = parent_key_columns[0]
     best_match = None
     second_best_score = -1
 
-    for parent_primary_key in schema[parent]["primary_key"]:
-        for column in details["columns"]:
-            score = score_reference_column(table, column, parent, parent_primary_key)
+    for column in details["columns"]:
+        score = score_reference_column(table, column, parent, parent_key_column)
 
-            if best_match is None or score > best_match["score"]:
-                if best_match is not None:
-                    second_best_score = max(second_best_score, best_match["score"])
-                best_match = {
-                    "child_column": column,
-                    "parent_column": parent_primary_key,
-                    "score": score,
-                    "explicit": False,
-                }
-            else:
-                second_best_score = max(second_best_score, score)
+        if best_match is None or score > best_match["score"]:
+            if best_match is not None:
+                second_best_score = max(second_best_score, best_match["score"])
+            best_match = {
+                "parent_columns": [parent_key_column],
+                "child_columns": [column],
+                "mode": "match",
+                "score": score,
+                "explicit": False,
+            }
+        else:
+            second_best_score = max(second_best_score, score)
 
     if not best_match:
         return None
@@ -157,7 +278,82 @@ def resolve_join_relationship(table, parent, schema, inferred_only=False):
     return best_match
 
 
-def infer_parent_relationship(table, schema, graph):
+def infer_shared_column_relationship(parent_table, child_table, schema, table_rows):
+    if not table_rows:
+        return None
+
+    parent_rows = table_rows.get(parent_table, [])
+    child_rows = table_rows.get(child_table, [])
+    if not parent_rows or not child_rows:
+        return None
+
+    common_columns = sorted(
+        set(schema[parent_table]["columns"]) & set(schema[child_table]["columns"])
+    )
+    if not common_columns:
+        return None
+
+    best_match = None
+
+    max_size = min(3, len(common_columns))
+    for size in range(max_size, 0, -1):
+        for combo in itertools.combinations(common_columns, size):
+            parent_counts = count_keys(parent_rows, combo)
+            child_counts = count_keys(child_rows, combo)
+            if not parent_counts or not child_counts:
+                continue
+
+            matched_keys = set(parent_counts) & set(child_counts)
+            if not matched_keys:
+                continue
+
+            matched_child = sum(child_counts[key] for key in matched_keys)
+            matched_parent = sum(parent_counts[key] for key in matched_keys)
+            child_total = sum(child_counts.values())
+            parent_total = sum(parent_counts.values())
+
+            child_coverage = matched_child / child_total if child_total else 0
+            parent_coverage = matched_parent / parent_total if parent_total else 0
+
+            if child_coverage < 0.5:
+                continue
+
+            exact_partition = (
+                matched_keys
+                and child_coverage == 1
+                and parent_coverage == 1
+                and all(child_counts[key] == parent_counts[key] for key in matched_keys)
+            )
+
+            score = (
+                child_coverage * 60
+                + parent_coverage * 20
+                + len(combo) * 12
+            )
+
+            if exact_partition:
+                score += 20
+            elif all(parent_counts[key] == 1 for key in matched_keys):
+                score += 8
+
+            candidate = {
+                "parent_columns": list(combo),
+                "child_columns": list(combo),
+                "mode": "aligned" if exact_partition else "match",
+                "score": score,
+                "explicit": False,
+            }
+
+            if best_match is None or candidate["score"] > best_match["score"]:
+                best_match = candidate
+
+    if best_match and best_match["score"] >= 55:
+        return best_match
+
+    return None
+
+
+def infer_parent_relationship(table, schema, graph, table_rows=None):
     best_parent = None
     second_best_score = -1
 
@@ -165,11 +361,15 @@ def infer_parent_relationship(table, schema, graph):
         if potential_parent == table:
             continue
 
-        parent_details = schema[potential_parent]
-        if not parent_details["primary_key"]:
-            continue
-
         relationship = resolve_join_relationship(table, potential_parent, schema, inferred_only=True)
+        if not relationship:
+            relationship = infer_shared_column_relationship(
+                potential_parent,
+                table,
+                schema,
+                table_rows,
+            )
+
         if not relationship:
             continue
 
@@ -197,7 +397,7 @@ def infer_parent_relationship(table, schema, graph):
         graph[table]["parents"].append(parent)
 
 
-def build_relationship_graph(schema):
+def build_relationship_graph(schema, table_rows=None):
     graph = {}
 
     for table in schema:
@@ -217,7 +417,7 @@ def build_relationship_graph(schema):
     for table, details in schema.items():
         if details["foreign_keys"]:
             continue
-        infer_parent_relationship(table, schema, graph)
+        infer_parent_relationship(table, schema, graph, table_rows)
 
     return graph
 
@@ -275,13 +475,13 @@ def get_mongo_field_names(node):
 def score_table_for_mongo_field(table, mongo_field_name, mongo_node, schema):
     table_columns = set(schema[table]["columns"])
     mongo_fields = get_mongo_field_names(mongo_node)
-    primary_keys = set(schema[table]["primary_key"])
+    key_columns = set(get_key_columns(schema[table]))
 
     overlap = len(table_columns & mongo_fields)
-    primary_key_overlap = len(primary_keys & mongo_fields)
+    key_overlap = len(key_columns & mongo_fields)
     name_score = similarity(table, mongo_field_name)
 
-    score = overlap * 12 + primary_key_overlap * 6
+    score = overlap * 12 + key_overlap * 6
 
     if singularize(table) == singularize(mongo_field_name):
         score += 30
@@ -296,20 +496,36 @@ def score_table_for_mongo_field(table, mongo_field_name, mongo_node, schema):
     return score
 
 
-def score_root_against_mongo(table, graph, schema, mongo_schema):
+def get_candidate_tables(table, graph, schema, table_rows=None):
+    candidates = []
+
+    for neighbor in graph.get(table, {}).get("children", []) + graph.get(table, {}).get("parents", []):
+        if neighbor not in candidates:
+            candidates.append(neighbor)
+
+    for other_table in schema:
+        if other_table == table or other_table in candidates:
+            continue
+        if resolve_table_connection(table, other_table, schema, table_rows):
+            candidates.append(other_table)
+
+    return candidates
+
+
+def score_root_against_mongo(table, graph, schema, mongo_schema, table_rows=None):
     table_columns = set(schema[table]["columns"])
-    primary_keys = set(schema[table]["primary_key"])
+    key_columns = set(get_key_columns(schema[table]))
     mongo_fields = get_mongo_field_names(mongo_schema)
 
     primitive_overlap = len(table_columns & mongo_fields)
-    primary_key_overlap = len(primary_keys & mongo_fields)
+    key_overlap = len(key_columns & mongo_fields)
 
-    score = primitive_overlap * 25 + primary_key_overlap * 10
+    score = primitive_overlap * 25 + key_overlap * 10
 
     for field_name, field_schema in get_nested_mongo_fields(mongo_schema):
         best_neighbor_score = 0
-        for neighbor in get_neighbor_tables(table, graph):
-            if resolve_table_connection(table, neighbor, schema):
+        for neighbor in get_candidate_tables(table, graph, schema, table_rows):
+            if resolve_table_connection(table, neighbor, schema, table_rows):
                 best_neighbor_score = max(
                     best_neighbor_score,
                     score_table_for_mongo_field(neighbor, field_name, field_schema, schema),
@@ -319,23 +535,23 @@ def score_root_against_mongo(table, graph, schema, mongo_schema):
     return score
 
 
-def root_score(table, graph, schema=None, mongo_schema=None):
+def root_score(table, graph, schema=None, mongo_schema=None, table_rows=None):
     descendants = count_descendants(graph, table, visited={table})
     children = len(graph[table]["children"])
     score = descendants * 20 + children * 5 - len(graph[table]["parents"]) * 50
 
     if schema:
-        primary_keys = set(schema[table]["primary_key"])
-        non_key_columns = set(schema[table]["columns"]) - primary_keys
+        key_columns = set(get_key_columns(schema[table]))
+        non_key_columns = set(schema[table]["columns"]) - key_columns
         score += len(non_key_columns)
 
     if schema and mongo_schema:
-        score += score_root_against_mongo(table, graph, schema, mongo_schema)
+        score += score_root_against_mongo(table, graph, schema, mongo_schema, table_rows)
 
     return score
 
 
-def find_root_table(graph, schema=None, mongo_schema=None):
+def find_root_table(graph, schema=None, mongo_schema=None, table_rows=None):
     if mongo_schema:
         candidates = list(graph.keys())
     else:
@@ -345,11 +561,11 @@ def find_root_table(graph, schema=None, mongo_schema=None):
 
     return max(
         candidates,
-        key=lambda table: (root_score(table, graph, schema, mongo_schema), table),
+        key=lambda table: (root_score(table, graph, schema, mongo_schema, table_rows), table),
     ) if candidates else None
 
 
-def choose_primary_parent(table, graph, schema):
+def choose_primary_parent(table, graph, schema, table_rows=None):
     parents = graph[table]["parents"]
     if not parents:
         return None
@@ -358,7 +574,7 @@ def choose_primary_parent(table, graph, schema):
     ranked = []
 
     for parent in parents:
-        relationship = resolve_join_relationship(table, parent, schema)
+        relationship = resolve_table_connection(parent, table, schema, table_rows)
         score = relationship["score"] if relationship else 0
 
         parent_tokens = set(tokenize(parent))
@@ -373,15 +589,14 @@ def choose_primary_parent(table, graph, schema):
     return ranked[0][1]
 
 
-def resolve_table_connection(parent_table, child_table, schema):
+def resolve_table_connection(parent_table, child_table, schema, table_rows=None):
     child_references_parent = resolve_join_relationship(child_table, parent_table, schema)
     if child_references_parent:
         return {
+            **child_references_parent,
             "parent_table": parent_table,
             "child_table": child_table,
-            "parent_column": child_references_parent["parent_column"],
-            "child_column": child_references_parent["child_column"],
-            "child_references_parent": True,
+            "score": child_references_parent["score"],
         }
 
     parent_references_child = resolve_join_relationship(parent_table, child_table, schema)
@@ -389,79 +604,74 @@ def resolve_table_connection(parent_table, child_table, schema):
         return {
             "parent_table": parent_table,
             "child_table": child_table,
-            "parent_column": parent_references_child["child_column"],
-            "child_column": parent_references_child["parent_column"],
-            "child_references_parent": False,
+            "parent_columns": parent_references_child["child_columns"],
+            "child_columns": parent_references_child["parent_columns"],
+            "mode": parent_references_child["mode"],
+            "score": parent_references_child["score"],
+            "explicit": parent_references_child["explicit"],
+        }
+
+    shared = infer_shared_column_relationship(parent_table, child_table, schema, table_rows)
+    if shared:
+        return {
+            **shared,
+            "parent_table": parent_table,
+            "child_table": child_table,
         }
 
     return None
 
 
-def get_neighbor_tables(table, graph):
-    neighbors = []
-
-    for neighbor in graph[table]["children"] + graph[table]["parents"]:
-        if neighbor not in neighbors:
-            neighbors.append(neighbor)
-
-    return neighbors
+def format_relation_columns(relation):
+    return ", ".join(
+        f"{parent}={child}"
+        for parent, child in zip(relation["parent_columns"], relation["child_columns"])
+    )
 
 
-def generate_join_query(mapping_tree, schema):
+def generate_join_query(mapping_tree, schema, table_rows=None):
     root = mapping_tree["table"]
+    lines = [f"ROOT {root}"]
 
-    select_fields = []
-    joins = []
-    alias_map = {}
-    alias_counter = 1
-
-    def assign_alias(table):
-        nonlocal alias_counter
-        alias = f"t{alias_counter}"
-        alias_counter += 1
-        alias_map[table] = alias
-        return alias
-
-    def traverse(node, parent=None):
-        table = node["table"]
-        alias = alias_map.get(table) or assign_alias(table)
-
-        for col in schema[table]["columns"]:
-            select_fields.append(f"{alias}.{col} AS {table}_{col}")
-
-        if parent:
-            parent_alias = alias_map[parent]
-            relationship = resolve_table_connection(parent, table, schema)
-            if relationship:
-                joins.append(
-                    f"LEFT JOIN {table} {alias} ON "
-                    f"{parent_alias}.{relationship['parent_column']} = {alias}.{relationship['child_column']}"
-                )
-
+    def traverse(node, depth=0):
+        indent = "  " * depth
         for child in node["children"]:
-            traverse(child, table)
+            relation = child.get("relation") or resolve_table_connection(
+                node["table"],
+                child["table"],
+                schema,
+                table_rows,
+            )
+            if relation:
+                mode = relation.get("mode", "match")
+                relation_desc = format_relation_columns(relation)
+                if mode == "aligned":
+                    lines.append(
+                        f"{indent}{node['table']} -> {child['table']} "
+                        f"(row-aligned on {relation_desc})"
+                    )
+                else:
+                    lines.append(
+                        f"{indent}{node['table']} -> {child['table']} "
+                        f"(match on {relation_desc})"
+                    )
+            else:
+                lines.append(f"{indent}{node['table']} -> {child['table']}")
+            traverse(child, depth + 1)
 
-    assign_alias(root)
     traverse(mapping_tree)
-
-    query = f"""
-    SELECT {', '.join(select_fields)}
-    FROM {root} {alias_map[root]}
-    {' '.join(joins)}
-    """
-
-    return query
+    return "\n".join(lines)
 
 
-def build_mapping_tree(graph, root, schema=None, mongo_schema=None):
+def build_mapping_tree(graph, root, schema=None, mongo_schema=None, table_rows=None):
     schema = schema or {}
     primary_parents = {
-        table: choose_primary_parent(table, graph, schema) if schema else None
+        table: choose_primary_parent(table, graph, schema, table_rows) if schema else None
         for table in graph
     }
     primary_parents[root] = None
 
-    def build_node(table, visited, mongo_node=None):
+    def build_node(table, visited, mongo_node=None, relation=None):
         visited = visited | {table}
         children = []
         used_tables = set()
@@ -469,33 +679,56 @@ def build_mapping_tree(graph, root, schema=None, mongo_schema=None):
         if mongo_node:
             for field_name, field_schema in get_nested_mongo_fields(mongo_node):
                 best_candidate = None
+                best_relation = None
                 best_score = 0
 
-                for candidate in get_neighbor_tables(table, graph):
+                for candidate in get_candidate_tables(table, graph, schema, table_rows):
                     if candidate in visited or candidate in used_tables:
                         continue
-                    if not resolve_table_connection(table, candidate, schema):
+
+                    relationship = resolve_table_connection(table, candidate, schema, table_rows)
+                    if not relationship:
                         continue
 
-                    score = score_table_for_mongo_field(candidate, field_name, field_schema, schema)
+                    score = relationship["score"] + score_table_for_mongo_field(
+                        candidate,
+                        field_name,
+                        field_schema,
+                        schema,
+                    )
                     if score > best_score:
                         best_score = score
                         best_candidate = candidate
+                        best_relation = relationship
 
                 if best_candidate and best_score >= 20:
-                    children.append(build_node(best_candidate, visited, field_schema))
+                    children.append(
+                        build_node(
+                            best_candidate,
+                            visited,
+                            field_schema,
+                            best_relation,
+                        )
+                    )
                     used_tables.add(best_candidate)
 
-        for candidate in graph[table]["children"]:
-            if candidate in visited or candidate in used_tables:
-                continue
-            if primary_parents.get(candidate) != table:
-                continue
-            children.append(build_node(candidate, visited, None))
+        if not mongo_node:
+            for candidate in graph[table]["children"]:
+                if candidate in visited or candidate in used_tables:
+                    continue
+                if primary_parents.get(candidate) != table:
+                    continue
+                relationship = resolve_table_connection(table, candidate, schema, table_rows)
+                children.append(build_node(candidate, visited, None, relationship))
 
-        return {
+        node = {
             "table": table,
             "children": children,
         }
+
+        if relation:
+            node["relation"] = relation
+
+        return node
 
     return build_node(root, set(), mongo_schema)

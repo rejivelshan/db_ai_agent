@@ -18,6 +18,7 @@ from core.schema_mapper import (
     build_relationship_graph,
     find_root_table,
     generate_join_query,
+    profile_schema,
 )
 from core.schema_mapper_runtime import apply_schema_mapping, set_schema
 from dotenv import load_dotenv
@@ -34,7 +35,7 @@ def parse_args():
     parser.add_argument("--pg-port", default=os.getenv("POSTGRES_PORT"))
     parser.add_argument("--mongo-uri", default=os.getenv("MONGO_URI", "mongodb://localhost:27017"))
     parser.add_argument("--mongo-db", default=os.getenv("MONGO_DB", "testdb"))
-    parser.add_argument("--mongo-collection", default=os.getenv("MONGO_COLLECTION", "lottery"))
+    parser.add_argument("--mongo-collection", default=os.getenv("MONGO_COLLECTION", "orders_embedded"))
     return parser.parse_args()
 
 
@@ -97,6 +98,11 @@ pg = PostgresConnector(
 )
 pg.connect()
 schema = extract_postgres_schema(pg.conn)
+table_rows = {
+    table: pg.fetch_data(f"SELECT * FROM {table}")
+    for table in schema
+}
+schema = profile_schema(schema, table_rows)
 set_schema(schema)
 
 mongo = MongoConnector(
@@ -115,21 +121,21 @@ for table, details in schema.items():
     print(f"\nTable: {table}")
     print("Columns:", details["columns"])
     print("PK:", details["primary_key"])
+    print("Inferred PK:", details.get("inferred_primary_key", []))
     print("FK:", details["foreign_keys"])
 print()
 
-graph = build_relationship_graph(schema)
-root = find_root_table(graph, schema, mongo_schema)
-mapping_tree = build_mapping_tree(graph, root, schema, mongo_schema)
+graph = build_relationship_graph(schema, table_rows)
+root = find_root_table(graph, schema, mongo_schema, table_rows)
+mapping_tree = build_mapping_tree(graph, root, schema, mongo_schema, table_rows)
 
 print("\nMapping Tree:")
 print(mapping_tree)
 
-auto_query = generate_join_query(mapping_tree, schema)
+auto_query = generate_join_query(mapping_tree, schema, table_rows)
 print("\nAuto Generated SQL:\n", auto_query)
 
-sql_data = pg.fetch_data(auto_query)
-normalized_sql = normalize_sql_data(sql_data, mapping_tree)
+normalized_sql = normalize_sql_data(table_rows, mapping_tree, schema)
 
 print("\nNormalized SQL:")
 print(normalized_sql)
@@ -164,7 +170,14 @@ normalized_sql = harmonize_to_schema(normalized_sql, mongo_schema)
 print("\nNormalized SQL AFTER Mapping:")
 print(normalized_sql)
 
-root_key = schema.get(root, {}).get("primary_key", [None])[0]
+root_key = next(
+    iter(
+        schema.get(root, {}).get("primary_key")
+        or schema.get(root, {}).get("inferred_primary_key")
+        or []
+    ),
+    None,
+)
 mismatches = compare_data(normalized_sql, mongo_data, root_key=root_key)
 
 print("\nComparison Result:")

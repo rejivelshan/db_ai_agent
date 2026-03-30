@@ -1,2 +1,26 @@
-error,category,status,mongo_value,path,severity,sql_value
-Extra record in Mongo (missing in SQL),DATA,MISSING_IN_SQL,"{'user_id': 2, 'name': 'Alice', 'email': 'alice@example.com', 'orders': [{'order_id': 102, 'total_amount': 300, 'items': [{'product_name': 'Keyboard', 'quantity': 1}]}]}",user_id=2,HIGH,
+error,sql_value,status,mongo_value,path,category,severity
+,John Doe,VALUE_MISMATCH,John,user_id=1.name,DATA,MEDIUM
+,,VALUE_MISMATCH,500,user_id=1.orders[order_id=101].total_amount,DATA,MEDIUM
+Missing in Mongo,"{'user_id': 2, 'name': 'Alice', 'email': 'alice@example.com', 'orders': [{'order_id': 102, 'items': [{'product_name': 'Keyboard', 'quantity': 1}]}]}",MISSING_IN_MONGO,,user_id=2,DATA,HIGH
+,Bob,VALUE_MISMATCH,David,user_id=3.name,DATA,MEDIUM
+,bob@example.com,VALUE_MISMATCH,david@example.com,user_id=3.email,DATA,MEDIUM
+,2,VALUE_MISMATCH,1,user_id=3.orders[order_id=103].items[product_name=Monitor].quantity,DATA,MEDIUM
+Missing in SQL,,MISSING_IN_SQL,"{'product_name': 'HDMI Cable', 'quantity': 2}",user_id=3.orders[order_id=103].items[product_name=HDMI Cable],DATA,HIGH
+,,VALUE_MISMATCH,1200,user_id=3.orders[order_id=103].total_amount,DATA,MEDIUM
+,Charlie,VALUE_MISMATCH,Emma,user_id=4.name,DATA,MEDIUM
+,charlie@example.com,VALUE_MISMATCH,emma@example.com,user_id=4.email,DATA,MEDIUM
+,,VALUE_MISMATCH,750,user_id=4.orders[order_id=104].total_amount,DATA,MEDIUM
+,David,VALUE_MISMATCH,Michael,user_id=5.name,DATA,MEDIUM
+,david@example.com,VALUE_MISMATCH,michael@example.com,user_id=5.email,DATA,MEDIUM
+Missing in SQL,,MISSING_IN_SQL,"{'product_name': 'Charger', 'quantity': 1}",user_id=5.orders[order_id=105].items[product_name=Charger],DATA,HIGH
+,,VALUE_MISMATCH,200,user_id=5.orders[order_id=105].total_amount,DATA,MEDIUM
+,Eva,VALUE_MISMATCH,Sophia,user_id=6.name,DATA,MEDIUM
+,eva@example.com,VALUE_MISMATCH,sophia@example.com,user_id=6.email,DATA,MEDIUM
+Missing in Mongo,"{'product_name': 'Camera', 'quantity': 1}",MISSING_IN_MONGO,,user_id=6.orders[order_id=106].items[product_name=Camera],DATA,HIGH
+Missing in SQL,,MISSING_IN_SQL,"{'product_name': 'Smartphone', 'quantity': 1}",user_id=6.orders[order_id=106].items[product_name=Smartphone],DATA,HIGH
+Missing in SQL,,MISSING_IN_SQL,"{'product_name': 'Case', 'quantity': 1}",user_id=6.orders[order_id=106].items[product_name=Case],DATA,HIGH
+,,VALUE_MISMATCH,980,user_id=6.orders[order_id=106].total_amount,DATA,MEDIUM
+Extra record in Mongo (missing in SQL),,MISSING_IN_SQL,"{'user_id': 7, 'name': 'Chris', 'email': 'chris@example.com', 'orders': [{'order_id': 107, 'total_amount': 450, 'items': [{'product_name': 'Speaker', 'quantity': 2}]}]}",user_id=7,DATA,HIGH
+Extra record in Mongo (missing in SQL),,MISSING_IN_SQL,"{'user_id': 8, 'name': 'Olivia', 'email': 'olivia@example.com', 'orders': [{'order_id': 108, 'total_amount': 300, 'items': [{'product_name': 'Keyboard', 'quantity': 1}]}]}",user_id=8,DATA,HIGH
+Extra record in Mongo (missing in SQL),,MISSING_IN_SQL,"{'user_id': 9, 'name': 'Daniel', 'email': 'daniel@example.com', 'orders': [{'order_id': 109, 'total_amount': 650, 'items': [{'product_name': 'Mouse', 'quantity': 2}]}]}",user_id=9,DATA,HIGH
+Extra record in Mongo (missing in SQL),,MISSING_IN_SQL,"{'user_id': 10, 'name': 'Isabella', 'email': 'isabella@example.com', 'orders': [{'order_id': 110, 'total_amount': 400, 'items': [{'product_name': 'Webcam', 'quantity': 1}]}]}",user_id=10,DATA,HIGH
