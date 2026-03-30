@@ -3,15 +3,59 @@ import datetime
 
 from rapidfuzz import fuzz
 
+IDENTIFIER_TOKENS = {"id", "number", "code", "ref", "key"}
+ENTITY_KEY_TOKENS = {"name", "email", "phone", "mobile", "username", "login"}
+ATTRIBUTE_TOKENS = {
+    "amount",
+    "balance",
+    "city",
+    "country",
+    "date",
+    "duration",
+    "fare",
+    "grade",
+    "price",
+    "rating",
+    "state",
+    "status",
+    "time",
+    "type",
+}
+
 
 def is_similar(a, b):
     return fuzz.ratio(str(a), str(b)) > 80
 
 
+def tokenize_name(name):
+    return [token for token in str(name).lower().split("_") if token]
+
+
 def is_identifier_like(name):
     return any(
-        token in {"id", "number", "code", "ref", "key"}
-        for token in str(name).lower().split("_")
+        token in IDENTIFIER_TOKENS
+        for token in tokenize_name(name)
+    )
+
+
+def is_entity_key_like(name):
+    return any(
+        token in ENTITY_KEY_TOKENS
+        for token in tokenize_name(name)
+    )
+
+
+def comparison_key_score(key, distinct_count=0, candidate_count=0):
+    tokens = tokenize_name(key)
+    attribute_count = sum(token in ATTRIBUTE_TOKENS for token in tokens)
+    specificity = sum(token not in ATTRIBUTE_TOKENS for token in tokens)
+    return (
+        0 if is_identifier_like(key) else 1 if is_entity_key_like(key) else 2,
+        attribute_count,
+        -specificity,
+        -distinct_count,
+        -candidate_count,
+        key,
     )
 
 
@@ -87,15 +131,14 @@ def find_identifier_key(records):
     if not unique_candidates:
         return None
 
-    def score(key):
-        return (
-            0 if is_identifier_like(key) else 1,
-            -len(candidate_distinct_values[key]),
-            -candidate_counts[key],
+    return min(
+        unique_candidates,
+        key=lambda key: comparison_key_score(
             key,
-        )
-
-    return min(unique_candidates, key=score)
+            distinct_count=len(candidate_distinct_values[key]),
+            candidate_count=candidate_counts[key],
+        ),
+    )
 
 
 def build_root_path(key_name, key_value):
@@ -293,10 +336,7 @@ def detect_key(l1, l2):
 
     ranked = sorted(
         common_keys,
-        key=lambda key: (
-            0 if is_identifier_like(key) else 1,
-            key,
-        ),
+        key=lambda key: comparison_key_score(key),
     )
     for key in ranked:
         values1 = [item.get(key) for item in l1 if isinstance(item, dict) and key in item]

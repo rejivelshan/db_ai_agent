@@ -8,7 +8,7 @@ from connectors.postgres_connector import PostgresConnector
 from core.ai_agent import explain_mismatch
 from core.auto_schema_mapper import auto_map_fields
 from core.chatbot import ask_agent
-from core.comparator import compare_data
+from core.comparator import compare_data, detect_key
 from core.mongo_schema_infer import infer_mongo_schema
 from core.normalizer import normalize_sql_data
 from core.reporter import export_to_csv
@@ -35,7 +35,7 @@ def parse_args():
     parser.add_argument("--pg-port", default=os.getenv("POSTGRES_PORT"))
     parser.add_argument("--mongo-uri", default=os.getenv("MONGO_URI", "mongodb://localhost:27017"))
     parser.add_argument("--mongo-db", default=os.getenv("MONGO_DB", "testdb"))
-    parser.add_argument("--mongo-collection", default=os.getenv("MONGO_COLLECTION", "orders_embedded"))
+    parser.add_argument("--mongo-collection", default=os.getenv("MONGO_COLLECTION", "payment"))
     return parser.parse_args()
 
 
@@ -170,7 +170,7 @@ normalized_sql = harmonize_to_schema(normalized_sql, mongo_schema)
 print("\nNormalized SQL AFTER Mapping:")
 print(normalized_sql)
 
-root_key = next(
+schema_root_key = next(
     iter(
         schema.get(root, {}).get("primary_key")
         or schema.get(root, {}).get("inferred_primary_key")
@@ -178,6 +178,7 @@ root_key = next(
     ),
     None,
 )
+root_key = detect_key(normalized_sql, mongo_data) or schema_root_key
 mismatches = compare_data(normalized_sql, mongo_data, root_key=root_key)
 
 print("\nComparison Result:")

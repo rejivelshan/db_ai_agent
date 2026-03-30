@@ -27,6 +27,24 @@ DEPRIORITIZED_PREFIXES = {
 }
 
 IDENTIFIER_TOKENS = {"id", "number", "code", "ref", "key"}
+ENTITY_KEY_TOKENS = {"name", "email", "phone", "mobile", "username", "login"}
+ATTRIBUTE_TOKENS = {
+    "amount",
+    "balance",
+    "city",
+    "country",
+    "date",
+    "duration",
+    "fare",
+    "grade",
+    "price",
+    "rating",
+    "state",
+    "status",
+    "time",
+    "type",
+}
+GENERIC_MATCH_TOKENS = {"date", "name", "status", "time", "type", "value"}
 MEASURE_TOKENS = {"amount", "fare", "price", "balance", "rating", "status", "date", "time"}
 
 
@@ -73,16 +91,32 @@ def is_identifier_like(name):
     return any(token in IDENTIFIER_TOKENS for token in tokenize(name))
 
 
+def is_entity_key_like(name):
+    return any(token in ENTITY_KEY_TOKENS for token in tokenize(name))
+
+
 def is_measure_like(name):
     return any(token in MEASURE_TOKENS for token in tokenize(name))
 
 
 def unique_key_score(combo):
     identifier_count = sum(1 for column in combo if is_identifier_like(column))
-    measure_count = sum(1 for column in combo if is_measure_like(column))
+    entity_key_count = sum(1 for column in combo if is_entity_key_like(column))
+    attribute_count = sum(
+        1
+        for column in combo
+        if any(token in ATTRIBUTE_TOKENS for token in tokenize(column))
+    )
+    specificity = sum(
+        sum(token not in ATTRIBUTE_TOKENS for token in tokenize(column))
+        for column in combo
+    )
     return (
-        measure_count,
+        attribute_count,
+        sum(1 for column in combo if is_measure_like(column)),
         -identifier_count,
+        -entity_key_count,
+        -specificity,
         len(combo),
         combo,
     )
@@ -161,6 +195,8 @@ def score_reference_column(table_name, column, parent_table, parent_key_column):
     column_tokens = set(tokenize(column))
     parent_tokens = set(tokenize(parent_table))
     key_tokens = set(tokenize(parent_key_column))
+    strong_column_tokens = column_tokens - GENERIC_MATCH_TOKENS
+    strong_key_tokens = key_tokens - GENERIC_MATCH_TOKENS
 
     legacy_candidates = set(get_reference_candidates(table_name, parent_table, [parent_key_column]))
     score = 0
@@ -174,16 +210,18 @@ def score_reference_column(table_name, column, parent_table, parent_key_column):
     if key_tokens and column_tokens == key_tokens:
         score = max(score, 90)
 
-    if key_tokens and key_tokens.issubset(column_tokens):
+    if strong_key_tokens and strong_key_tokens.issubset(column_tokens):
         score = max(score, 82)
 
-    if key_tokens and column_tokens.issubset(key_tokens) and column_tokens:
+    if strong_column_tokens and strong_column_tokens.issubset(key_tokens):
         score = max(score, 72)
 
-    shared_key_tokens = len(column_tokens & key_tokens)
+    shared_key_tokens = len((column_tokens & key_tokens) - GENERIC_MATCH_TOKENS)
+    shared_generic_tokens = len((column_tokens & key_tokens) & GENERIC_MATCH_TOKENS)
     shared_parent_tokens = len(column_tokens & parent_tokens)
 
     score += shared_key_tokens * 18
+    score += shared_generic_tokens * 3
     score += shared_parent_tokens * 10
 
     if shared_key_tokens and shared_parent_tokens:
@@ -590,34 +628,55 @@ def choose_primary_parent(table, graph, schema, table_rows=None):
 
 
 def resolve_table_connection(parent_table, child_table, schema, table_rows=None):
+    candidates = []
+
     child_references_parent = resolve_join_relationship(child_table, parent_table, schema)
     if child_references_parent:
-        return {
+        candidates.append({
             **child_references_parent,
             "parent_table": parent_table,
             "child_table": child_table,
             "score": child_references_parent["score"],
-        }
+            "_preference": 3,
+        })
+
+    shared = infer_shared_column_relationship(parent_table, child_table, schema, table_rows)
+    if shared:
+        candidates.append({
+            **shared,
+            "parent_table": parent_table,
+            "child_table": child_table,
+            "_preference": 2,
+        })
 
     parent_references_child = resolve_join_relationship(parent_table, child_table, schema)
     if parent_references_child:
-        return {
+        adjusted_score = parent_references_child["score"]
+        if not parent_references_child["explicit"]:
+            adjusted_score -= 12
+
+        candidates.append({
             "parent_table": parent_table,
             "child_table": child_table,
             "parent_columns": parent_references_child["child_columns"],
             "child_columns": parent_references_child["parent_columns"],
             "mode": parent_references_child["mode"],
-            "score": parent_references_child["score"],
+            "score": adjusted_score,
             "explicit": parent_references_child["explicit"],
-        }
+            "_preference": 1,
+        })
 
-    shared = infer_shared_column_relationship(parent_table, child_table, schema, table_rows)
-    if shared:
-        return {
-            **shared,
-            "parent_table": parent_table,
-            "child_table": child_table,
-        }
+    if candidates:
+        chosen = max(
+            candidates,
+            key=lambda relationship: (
+                relationship["score"],
+                1 if relationship.get("explicit") else 0,
+                relationship.get("_preference", 0),
+            ),
+        )
+        chosen.pop("_preference", None)
+        return chosen
 
     return None
 
