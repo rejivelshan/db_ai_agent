@@ -1,15 +1,6 @@
 import csv
 import os
 
-fieldnames = [
-    "status",
-    "category",
-    "severity",
-    "path",
-    "sql_value",
-    "mongo_value",
-    "error"
-]
 
 def export_to_csv(mismatches, filename="report.csv"):
     if not mismatches:
@@ -19,16 +10,12 @@ def export_to_csv(mismatches, filename="report.csv"):
     os.makedirs(os.path.dirname(filename), exist_ok=True)
 
     keys = set()
-    for m in mismatches:
-        keys.update(m.keys())
+    for mismatch in mismatches:
+        keys.update(mismatch.keys())
 
-    keys = list(keys)
-
-    with open(filename, "w", newline="", encoding="utf-8") as f:
-
-        writer = csv.DictWriter(f, fieldnames=keys)
+    with open(filename, "w", newline="", encoding="utf-8") as file_handle:
+        writer = csv.DictWriter(file_handle, fieldnames=list(keys))
         writer.writeheader()
         writer.writerows(mismatches)
 
-
-    print(f"📁 Report exported to {filename}")
+    print(f"Report exported to {filename}")

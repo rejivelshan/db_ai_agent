@@ -76,7 +76,7 @@ DB AI Agent is an intelligent system that compares PostgreSQL and MongoDB data, 
 
 ## 🧠 Example Queries
 
-* Why is user_id=2 mismatched?
+* Why is record_key=2 mismatched?
 * Summarize all issues
 * Which records have errors?
 * How to fix mismatches?

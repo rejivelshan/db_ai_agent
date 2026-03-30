@@ -1,2 +1,2 @@
-mongo_value,severity,status,sql_value,error,category,path
-"{'product_name': 'Keyboard', 'quantity': 1}",HIGH,MISSING_IN_SQL,,Missing in SQL,DATA,user_id=2.orders[order_id=102].items[product_name=Keyboard]
+error,category,status,mongo_value,path,severity,sql_value
+Extra record in Mongo (missing in SQL),DATA,MISSING_IN_SQL,"{'user_id': 2, 'name': 'Alice', 'email': 'alice@example.com', 'orders': [{'order_id': 102, 'total_amount': 300, 'items': [{'product_name': 'Keyboard', 'quantity': 1}]}]}",user_id=2,HIGH,
